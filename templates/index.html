@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>국내 철도 실시간 시각화 · 연속 열차 시뮬레이션</title>
+
+  <!-- Leaflet CSS -->
+  <link
+    rel="stylesheet"
+    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+    crossorigin=""
+  />
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}" />
+</head>
+<body>
+  <div class="app-shell">
+    <!-- 상단 헤더 -->
+    <header class="topbar">
+      <div class="topbar-left">
+        <button
+          id="toggle-sidebar-btn"
+          class="icon-btn"
+          type="button"
+          aria-label="제어 패널 열기/닫기"
+          aria-expanded="true"
+        >
+          <span class="hamburger-icon" aria-hidden="true">☰</span>
+        </button>
+        <div class="brand">
+          <span class="brand-emoji" aria-hidden="true">🚄</span>
+          <div>
+            <h1 class="brand-title">국내 철도 실시간 시각화</h1>
+            <p class="brand-subtitle">EPSG:5179 5km 버퍼 분석 · 연속 열차 시뮬레이션</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="topbar-right">
+        <div class="status-pill" id="sim-status-pill">
+          <span class="status-dot running" id="sim-status-dot"></span>
+          <span id="sim-status-text">연속 운행 중</span>
+        </div>
+        <div class="metric-chip" title="현재 운행 열차 수">
+          <span>열차</span>
+          <strong id="header-train-count">0</strong>대
+        </div>
+        <button id="header-play-btn" class="primary-btn compact-btn" type="button">
+          ⏸ 일시정지
+        </button>
+      </div>
+    </header>
+
+    <!-- 메인 컨텐츠: 사이드바 + 지도 -->
+    <main class="workspace">
+      <div id="sidebar-backdrop" class="sidebar-backdrop" hidden></div>
+
+      <aside id="control-sidebar" class="sidebar" aria-label="시뮬레이션 제어 및 열차 현황">
+        <div class="sidebar-header-mobile">
+          <strong>관제 패널</strong>
+          <button id="close-sidebar-btn" class="icon-btn" type="button" aria-label="패널 닫기">✕</button>
+        </div>
+
+        <div class="sidebar-scroll">
+          <!-- 시뮬레이션 제어 -->
+          <section class="panel-card">
+            <div class="panel-header">
+              <h2>연속 시뮬레이션 제어</h2>
+              <span class="badge" id="speed-badge">60x</span>
+            </div>
+
+            <div class="btn-row">
+              <button id="play-pause-btn" class="primary-btn flex-1" type="button">
+                ⏸ 일시정지
+              </button>
+              <button id="add-train-btn" class="secondary-btn" type="button">
+                + 열차 추가
+              </button>
+              <button id="reset-trains-btn" class="ghost-btn" type="button" title="열차 초기화">
+                ↻
+              </button>
+            </div>
+
+            <div class="control-group">
+              <label for="speed-slider" class="control-label">
+                <span>시뮬레이션 배속</span>
+                <span class="hint" id="speed-value-text">60배속</span>
+              </label>
+              <input
+                id="speed-slider"
+                type="range"
+                min="5"
+                max="200"
+                step="5"
+                value="60"
+              />
+            </div>
+
+            <div class="control-group">
+              <label for="mode-select" class="control-label">
+                <span>운행 모드</span>
+              </label>
+              <select id="mode-select" class="select-input">
+                <option value="shuttle" selected>왕복 운행 (종점 자동 회차)</option>
+                <option value="loop">연속 순환 (끊임없는 배차)</option>
+              </select>
+            </div>
+
+            <div class="control-group">
+              <label for="buffer-select" class="control-label">
+                <span>철도 영향권 버퍼 (EPSG:5179)</span>
+              </label>
+              <select id="buffer-select" class="select-input">
+                <option value="3">3 km 버퍼</option>
+                <option value="5" selected>5 km 버퍼 (기본)</option>
+                <option value="10">10 km 버퍼</option>
+                <option value="15">15 km 버퍼</option>
+              </select>
+            </div>
+
+            <label class="checkbox-row">
+              <input type="checkbox" id="toggle-labels" checked />
+              <span>열차 번호 라벨 표시</span>
+            </label>
+          </section>
+
+          <!-- 공간 분석 요약 -->
+          <section class="panel-card">
+            <div class="panel-header">
+              <h2>버퍼 공간 분석</h2>
+              <span class="badge neutral" id="buffer-badge">5 km</span>
+            </div>
+            <div class="stats-grid">
+              <div class="stat-box">
+                <span class="stat-label">총 노선 길이</span>
+                <strong class="stat-value" id="stat-length">-</strong>
+              </div>
+              <div class="stat-box">
+                <span class="stat-label">전체 영향권</span>
+                <strong class="stat-value" id="stat-total-area">-</strong>
+              </div>
+              <div class="stat-box blue">
+                <span class="stat-label">비중첩 영역</span>
+                <strong class="stat-value" id="stat-non-overlap">-</strong>
+              </div>
+              <div class="stat-box red">
+                <span class="stat-label">중첩 영역 (<span id="stat-overlap-pct">-</span>)</span>
+                <strong class="stat-value" id="stat-overlap">-</strong>
+              </div>
+            </div>
+          </section>
+
+          <!-- 실시간 운행 열차 목록 -->
+          <section class="panel-card">
+            <div class="panel-header">
+              <h2>실시간 운행 열차</h2>
+              <button id="unfollow-btn" class="link-btn" type="button" hidden>추적 해제</button>
+            </div>
+            <div id="train-list" class="train-list">
+              <div class="empty-state">열차 데이터를 불러오는 중...</div>
+            </div>
+          </section>
+        </div>
+      </aside>
+
+      <!-- 지도 영역 -->
+      <section class="map-stage" aria-label="철도 시뮬레이션 지도">
+        <div id="map"></div>
+
+        <!-- 로딩 오버레이 -->
+        <div id="map-loading" class="map-loading">
+          <div class="spinner" aria-hidden="true"></div>
+          <span>지리 데이터 및 열차 시뮬레이션 초기화 중...</span>
+        </div>
+
+        <!-- 반응형 지도 범례 -->
+        <div id="map-legend" class="map-legend">
+          <div class="legend-header">
+            <span>지도 범례</span>
+            <button
+              id="toggle-legend-btn"
+              class="legend-toggle-btn"
+              type="button"
+              aria-label="범례 접기/펼치기"
+            >
+              ▾
+            </button>
+          </div>
+          <div class="legend-body" id="legend-body">
+            <div class="legend-item">
+              <span class="legend-swatch non-overlap"></span>
+              <span id="legend-non-overlap-text">5km 비중첩 영역</span>
+            </div>
+            <div class="legend-item">
+              <span class="legend-swatch overlap"></span>
+              <span id="legend-overlap-text">5km 중첩 영역</span>
+            </div>
+            <div class="legend-item">
+              <span class="legend-line"></span>
+              <span>철도 노선</span>
+            </div>
+            <div class="legend-item">
+              <span class="legend-train-icon">🚄</span>
+              <span>연속 이동 열차</span>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- Leaflet JS -->
+  <script
+    src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+    integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+    crossorigin=""
+  ></script>
+  <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+</body>
+</html>
